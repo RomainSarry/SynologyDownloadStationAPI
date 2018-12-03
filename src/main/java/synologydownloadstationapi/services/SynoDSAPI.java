@@ -4,21 +4,14 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import org.apache.http.NameValuePair;
-import org.apache.http.client.utils.URLEncodedUtils;
-import org.apache.http.message.BasicNameValuePair;
 import synologydownloadstationapi.beans.SynoDSTorrent;
 import synologydownloadstationapi.beans.SynoDSTorrentFile;
 import synologydownloadstationapi.exceptions.*;
 
-import javax.net.ssl.HttpsURLConnection;
 import java.io.*;
 import java.net.*;
-import java.util.ArrayList;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Created by Romain on 11/11/2018.
@@ -36,20 +29,14 @@ public class SynoDSAPI {
 
         CookieManager cookieManager = new CookieManager();
         CookieHandler.setDefault(cookieManager);
-        URL url = new URL(urlString + "/auth.cgi?api=SYNO.API.Auth&version=1&method=login&account=" + username + "&passwd=" + password + "&session=DownloadStation&format=cookie");
+        URL url = new URL(this.urlString + "/auth.cgi?api=SYNO.API.Auth&version=2&method=login&account=" + username + "&passwd=" + password + "&session=DownloadStation&format=cookie");
 
-        HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
-        connection.setRequestMethod("POST");
+        this.urlString = this.urlString + "/DownloadStation/task.cgi?api=SYNO.DownloadStation.Task";
+
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setRequestMethod("GET");
         connection.setDoInput(true);
         connection.setDoOutput(true);
-
-        OutputStream os = connection.getOutputStream();
-        BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(os, UTF_8));
-        writer.write("username=" + URLEncoder.encode(username, UTF_8) + "&password="
-                + URLEncoder.encode(password, UTF_8));
-        writer.flush();
-        writer.close();
-        os.close();
 
         connection.getContent();
 
@@ -61,7 +48,7 @@ public class SynoDSAPI {
         }
     }
 
-    public List<SynoDSTorrent> getTorrentsList() throws SynoDSTorrentsFetchingException {
+    public List<SynoDSTorrent> getTorrentList() throws SynoDSTorrentsFetchingException {
         String url = null;
 
         try {
@@ -70,16 +57,17 @@ public class SynoDSAPI {
             ObjectMapper mapper = new ObjectMapper();
             mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-            url = urlString + "/DownloadStation/task.cgi?api=SYNO.DownloadStation.Task&version=1&method=list&additional=detail,file";
-            ArrayNode tasksNode = (ArrayNode) mapper.readTree(getRequest(url)).get("data").get("tasks");
+            url = urlString + "&version=1&method=list&additional=detail,file";
+            JsonNode tasksNode = mapper.readTree(getRequest(url)).get("data").get("tasks");
             for (JsonNode taskNode : tasksNode) {
-                if (taskNode.get("type").equals("bt")) {
+                if (taskNode.get("type").asText().equals("bt")) {
                     SynoDSTorrent torrent = mapper.readValue(taskNode.toString(), SynoDSTorrent.class);
-                    JsonNode additionnalNode = taskNode.get("additiionnal");
-                    if (additionnalNode.has("file")) {
-                        JsonNode fileNode = additionnalNode.get("file");
+                    JsonNode additionalNode = taskNode.get("additional");
+                    if (additionalNode.has("file")) {
+                        JsonNode fileNode = additionalNode.get("file");
                         torrent.setFiles(mapper.readValue(fileNode.toString(), new TypeReference<List<SynoDSTorrentFile>>() {}));
                     }
+                    torrents.add(torrent);
                 }
             }
 
@@ -98,13 +86,13 @@ public class SynoDSAPI {
             ObjectMapper mapper = new ObjectMapper();
             mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-            url = urlString + "/DownloadStation/task.cgi?api=SYNO.DownloadStation.Task&version=1&method=getinfo&additional=detail,file&id=" + id;
-            JsonNode taskNode = (ArrayNode) mapper.readTree(getRequest(url)).get("data").get("tasks").get(0);
-            if (taskNode.get("type").equals("bt")) {
+            url = urlString + "&version=1&method=getinfo&additional=detail,file&id=" + id;
+            JsonNode taskNode = mapper.readTree(getRequest(url)).get("data").get("tasks").get(0);
+            if (taskNode.get("type").asText().equals("bt")) {
                 torrent = mapper.readValue(taskNode.toString(), SynoDSTorrent.class);
-                JsonNode additionnalNode = taskNode.get("additiionnal");
-                if (additionnalNode.has("file")) {
-                    JsonNode fileNode = additionnalNode.get("file");
+                JsonNode additional = taskNode.get("additional");
+                if (additional.has("file")) {
+                    JsonNode fileNode = additional.get("file");
                     torrent.setFiles(mapper.readValue(fileNode.toString(), new TypeReference<List<SynoDSTorrentFile>>() {}));
                 }
             }
@@ -115,34 +103,37 @@ public class SynoDSAPI {
         }
     }
 
-    public void addTorrents(List<String> urls, Map<String, String> parameters) {
-
+    public void addTorrents(List<String> urls, String destination) throws SynoDSGetException, SynoDSParameterException {
+        String url = urlString + "&version=3&method=create&destination=" + destination + "&uri=" + encodeParameter(String.join(",", urls));
+        getRequest(url);
     }
 
-    public void deleteTorrents(List<String> ids) {
-
+    public void deleteTorrents(List<String> ids) throws SynoDSGetException {
+        String url = urlString + "&version=1&method=delete&id=" + String.join(",", ids);
+        getRequest(url);
     }
 
-    public void pauseTorrents(List<String> ids) {
-
+    public void pauseTorrents(List<String> ids) throws SynoDSGetException {
+        String url = urlString + "&version=1&method=pause&id=" + String.join(",", ids);
+        getRequest(url);
     }
 
-    public void resumeTorrents(List<String> ids) {
-
+    public void resumeTorrents(List<String> ids) throws SynoDSGetException {
+        String url = urlString + "&version=1&method=resume&id=" + String.join(",", ids);
+        getRequest(url);
     }
 
-    private String getParamsAsString(Map<String, String> parameters) throws SynoDSParametersException {
-        try {
-            List<NameValuePair> paramsAsNameValuePairs = new LinkedList<>();
-            if (parameters != null && !parameters.isEmpty()) {
-                for (Map.Entry<String, String> entry : parameters.entrySet()) {
-                    paramsAsNameValuePairs.add(new BasicNameValuePair(entry.getKey(), entry.getValue()));
-                }
-            }
+    public void pauseAllTorrents() throws SynoDSTorrentsFetchingException, SynoDSGetException {
+        List<String> ids = getTorrentList().stream().map(SynoDSTorrent::getId).collect(Collectors.toList());
+        if (!ids.isEmpty()) {
+            pauseTorrents(ids);
+        }
+    }
 
-            return URLEncodedUtils.format(paramsAsNameValuePairs, UTF_8);
-        } catch (Exception e) {
-            throw new SynoDSParametersException(parameters);
+    public void resumeAllTorrents() throws SynoDSTorrentsFetchingException, SynoDSGetException {
+        List<String> ids = getTorrentList().stream().map(SynoDSTorrent::getId).collect(Collectors.toList());
+        if (!ids.isEmpty()) {
+            resumeTorrents(ids);
         }
     }
 
@@ -164,30 +155,11 @@ public class SynoDSAPI {
         }
     }
 
-    private void postRequest(String url, Map<String, String> parameters) throws SynoDSParametersException, SynoDSPostException {
+    private String encodeParameter(String parameter) throws SynoDSParameterException {
         try {
-            HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
-            connection.setRequestProperty("Cookie", "id=" + sessionId);
-            connection.setRequestMethod("POST");
-            connection.setDoInput(true);
-            connection.setDoOutput(true);
-
-            OutputStream os = connection.getOutputStream();
-            BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(os, UTF_8));
-            writer.write(getParamsAsString(parameters));
-            writer.flush();
-            writer.close();
-            os.close();
-
-            connection.getInputStream();
-        } catch (SynoDSParametersException e) {
-            throw e;
+            return URLEncoder.encode(parameter, UTF_8);
         } catch (Exception e) {
-            if (parameters == null || parameters.isEmpty()) {
-                throw new SynoDSPostException(url);
-            } else {
-                throw new SynoDSPostException(url, parameters);
-            }
+            throw new SynoDSParameterException(parameter);
         }
     }
 }
