@@ -24,8 +24,12 @@ public class SynoDSAPI {
 
     private String sessionId;
 
-    public SynoDSAPI(String urlString, String username, String password) throws Exception {
+    public SynoDSAPI(String urlString, String username, String password) throws SynoDSURLException, SynoDSLoginException, IOException {
         this.urlString = urlString + "/webapi";
+
+        if (urlString == null) {
+            throw new SynoDSURLException(urlString);
+        }
 
         CookieManager cookieManager = new CookieManager();
         CookieHandler.setDefault(cookieManager);
@@ -45,6 +49,10 @@ public class SynoDSAPI {
             if (cookie.getName().equals("id")) {
                 sessionId = cookie.getValue();
             }
+        }
+
+        if (sessionId == null) {
+            throw new SynoDSLoginException(username);
         }
     }
 
